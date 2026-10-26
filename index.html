@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>선대칭 도형 완성하기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans KR', sans-serif;
+            background-color: #f3f4f6;
+            touch-action: none; /* 터치 스크롤 방지 */
+        }
+        #gameCanvas {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            background-color: #ffffff;
+            width: 100%;
+            max-width: 600px;
+            aspect-ratio: 1 / 1;
+            border-radius: 12px;
+            cursor: crosshair;
+        }
+        .instruction-panel {
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="max-w-2xl w-full flex flex-col items-center">
+        <!-- 헤더 -->
+        <h1 class="text-3xl font-bold text-gray-800 mb-2 flex items-center gap-2">
+            🦋 선대칭 도형 완성하기
+        </h1>
+        <p class="text-gray-500 mb-6 font-medium">대칭축을 기준으로 반대쪽 도형을 그려보세요!</p>
+
+        <!-- 안내 메시지 패널 -->
+        <div id="instructionPanel" class="instruction-panel w-full bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 rounded-r-lg shadow-sm mb-6 flex items-center justify-between">
+            <div class="flex items-start gap-3">
+                <div class="text-2xl pt-1" id="stepIcon">1️⃣</div>
+                <div>
+                    <h3 class="font-bold text-lg" id="stepTitle">대칭점 찾기</h3>
+                    <p id="stepDesc" class="text-sm mt-1">왼쪽 도형의 파란색 점(대응점)을 클릭하고 대칭축 반대편으로 드래그하여 수선을 긋고 대칭점을 찍어보세요.</p>
+                </div>
+            </div>
+            <button onclick="initGame()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-semibold transition text-sm whitespace-nowrap ml-4">
+                다시 하기
+            </button>
+        </div>
+
+        <!-- 캔버스 영역 -->
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 게임 상태: 0 = 대칭점 찾기, 1 = 점 연결하기, 2 = 완성
+        let gameState = 0; 
+
+        const CANVAS_SIZE = 600;
+        const GRID_SIZE = 30;
+        const AXIS_X = 300;
+
+        // 왼쪽 반쪽 도형 데이터 (대칭축에 있는 점 포함)
+        const leftShape = [
+            { x: 300, y: 90, isAxis: true },   // P0 (Top)
+            { x: 150, y: 180, isAxis: false }, // P1
+            { x: 210, y: 300, isAxis: false }, // P2
+            { x: 90, y: 420, isAxis: false },  // P3
+            { x: 240, y: 510, isAxis: false }, // P4
+            { x: 300, y: 540, isAxis: true }   // P5 (Bottom)
+        ];
+
+        // 대칭해야 할 점과 목표점 설정
+        let mirrorTargets = [];
+        let rightPoints = []; // 우측 점들 (축에 있는 점 + 찾아낸 대칭점)
+        let foundTargets = []; 
+        let edgesToDraw = [];
+        let drawnEdges = [];
+
+        // 드래그 상태 관리
+        let isDragging = false;
+        let dragStartPoint = null;
+        let currentMousePos = { x: 0, y: 0 };
+
+        function initGame() {
+            gameState = 0;
+            foundTargets = [];
+            drawnEdges = [];
+            mirrorTargets = [];
+            rightPoints = [leftShape[0], leftShape[leftShape.length - 1]]; // 축 위의 두 점은 처음부터 우측 점에 포함
+
+            // 대칭 목표점 계산
+            for (let i = 0; i < leftShape.length; i++) {
+                const pt = leftShape[i];
+                if (!pt.isAxis) {
+                    const targetX = AXIS_X + (AXIS_X - pt.x); // 대칭점 X좌표
+                    mirrorTargets.push({
+                        original: pt,
+                        target: { x: targetX, y: pt.y },
+                        found: false
+                    });
+                }
+            }
+
+            // 그려야 할 선분 쌍 계산
+            edgesToDraw = [];
+            const rightShapeSeq = [
+                leftShape[0], // Top
+                { x: AXIS_X + (AXIS_X - leftShape[1].x), y: leftShape[1].y },
+                { x: AXIS_X + (AXIS_X - leftShape[2].x), y: leftShape[2].y },
+                { x: AXIS_X + (AXIS_X - leftShape[3].x), y: leftShape[3].y },
+                { x: AXIS_X + (AXIS_X - leftShape[4].x), y: leftShape[4].y },
+                leftShape[5]  // Bottom
+            ];
+            
+            for(let i=0; i<rightShapeSeq.length - 1; i++) {
+                edgesToDraw.push([rightShapeSeq[i], rightShapeSeq[i+1]]);
+            }
+
+            updateUI();
+            draw();
+        }
+
+        function updateUI() {
+            const panel = document.getElementById('instructionPanel');
+            const icon = document.getElementById('stepIcon');
+            const title = document.getElementById('stepTitle');
+            const desc = document.getElementById('stepDesc');
+
+            if (gameState === 0) {
+                panel.className = "instruction-panel w-full bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 rounded-r-lg shadow-sm mb-6 flex items-center justify-between";
+                icon.textContent = "1️⃣";
+                title.textContent = "대칭점 찾기";
+                desc.textContent = "왼쪽 파란 점을 클릭하고 오른쪽으로 드래그해 수선을 긋고 대칭점 위치에서 마우스를 놓으세요.";
+            } else if (gameState === 1) {
+                panel.className = "instruction-panel w-full bg-green-50 border-l-4 border-green-500 text-green-700 p-4 rounded-r-lg shadow-sm mb-6 flex items-center justify-between";
+                icon.textContent = "2️⃣";
+                title.textContent = "선 연결하기";
+                desc.textContent = "모든 대칭점을 찾았습니다! 위에서부터 점들을 차례대로 드래그하여 선대칭 도형을 완성하세요.";
+            } else if (gameState === 2) {
+                panel.className = "instruction-panel w-full bg-yellow-50 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-r-lg shadow-sm mb-6 flex items-center justify-between";
+                icon.textContent = "🎉";
+                title.textContent = "완성!";
+                desc.textContent = "축을 중심으로 완벽히 포개어지는 선대칭 도형이 완성되었습니다!";
+            }
+        }
+
+        // 그리기 관련 함수들
+        function drawGrid() {
+            ctx.strokeStyle = '#e5e7eb'; // 옅은 회색
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= CANVAS_SIZE; i += GRID_SIZE) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, CANVAS_SIZE);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(CANVAS_SIZE, i);
+                ctx.stroke();
+            }
+        }
+
+        function drawAxis() {
+            ctx.strokeStyle = '#ef4444'; // 빨간색 대칭축
+            ctx.lineWidth = 3;
+            ctx.setLineDash([10, 5]);
+            ctx.beginPath();
+            ctx.moveTo(AXIS_X, 30);
+            ctx.lineTo(AXIS_X, CANVAS_SIZE - 30);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function drawLeftShape() {
+            ctx.beginPath();
+            ctx.moveTo(leftShape[0].x, leftShape[0].y);
+            for (let i = 1; i < leftShape.length; i++) {
+                ctx.lineTo(leftShape[i].x, leftShape[i].y);
+            }
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.2)'; // 파란색 반투명 채우기
+            ctx.fill();
+            
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // 왼쪽 점들
+            leftShape.forEach(pt => {
+                if (!pt.isAxis) {
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+                    ctx.fillStyle = '#2563eb';
+                    ctx.fill();
+                }
+            });
+        }
+
+        function drawRightShape() {
+            // 완료된 경우 우측 영역 칠하기
+            if (gameState === 2) {
+                ctx.beginPath();
+                ctx.moveTo(edgesToDraw[0][0].x, edgesToDraw[0][0].y);
+                for(let i=0; i<edgesToDraw.length; i++) {
+                    ctx.lineTo(edgesToDraw[i][1].x, edgesToDraw[i][1].y);
+                }
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.2)'; // 녹색 반투명
+                ctx.fill();
+            }
+
+            // 찾은 수선과 점
+            mirrorTargets.forEach(mt => {
+                if (mt.found) {
+                    // 수선 (점선) 그리기
+                    ctx.beginPath();
+                    ctx.moveTo(mt.original.x, mt.original.y);
+                    ctx.lineTo(mt.target.x, mt.target.y);
+                    ctx.strokeStyle = '#9ca3af';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // 찾은 대칭점
+                    ctx.beginPath();
+                    ctx.arc(mt.target.x, mt.target.y, 6, 0, Math.PI * 2);
+                    ctx.fillStyle = '#10b981'; // 녹색
+                    ctx.fill();
+                }
+            });
+
+            // 드래그 중인 수선/선분
+            if (isDragging && dragStartPoint) {
+                ctx.beginPath();
+                ctx.moveTo(dragStartPoint.x, dragStartPoint.y);
+                ctx.lineTo(currentMousePos.x, currentMousePos.y);
+                
+                if (gameState === 0) {
+                    ctx.strokeStyle = '#9ca3af';
+                    ctx.setLineDash([5, 5]);
+                } else if (gameState === 1) {
+                    ctx.strokeStyle = '#10b981';
+                    ctx.setLineDash([]);
+                }
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // 확정된 우측 선분들
+            drawnEdges.forEach(edge => {
+                ctx.beginPath();
+                ctx.moveTo(edge[0].x, edge[0].y);
+                ctx.lineTo(edge[1].x, edge[1].y);
+                ctx.strokeStyle = '#10b981';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            });
+            
+            // 2단계에서 연결해야 할 점들 표시
+            if(gameState === 1) {
+                rightPoints.forEach(pt => {
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+                    ctx.fillStyle = '#fbbf24'; // 노란색
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                });
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            drawGrid();
+            drawLeftShape();
+            drawRightShape();
+            drawAxis(); // 대칭축이 항상 맨 위에 보이도록
+        }
+
+        // 유틸리티: 두 점 사이의 거리
+        function getDist(p1, p2) {
+            return Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        }
+
+        // 이벤트 처리
+        function getMousePos(evt) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            let clientX = evt.clientX;
+            let clientY = evt.clientY;
+
+            if(evt.touches && evt.touches.length > 0) {
+                clientX = evt.touches[0].clientX;
+                clientY = evt.touches[0].clientY;
+            }
+
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+
+        function handleDown(e) {
+            if (gameState === 2) return; // 게임 끝남
+            e.preventDefault();
+            const pos = getMousePos(e);
+            
+            if (gameState === 0) {
+                // 왼쪽 점에서 시작하는지 확인
+                for (let mt of mirrorTargets) {
+                    if (!mt.found && getDist(pos, mt.original) < 20) {
+                        isDragging = true;
+                        dragStartPoint = mt.original;
+                        currentMousePos = pos;
+                        break;
+                    }
+                }
+            } else if (gameState === 1) {
+                // 완성된 우측 점(축 포함)에서 시작하는지 확인
+                for (let pt of rightPoints) {
+                    if (getDist(pos, pt) < 20) {
+                        isDragging = true;
+                        dragStartPoint = pt;
+                        currentMousePos = pos;
+                        break;
+                    }
+                }
+            }
+            draw();
+        }
+
+        function handleMove(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            currentMousePos = getMousePos(e);
+            
+            // 수선 긋기 (가로로만 긋고 싶게 유도하기 위해 y축 고정 효과 옵션 추가 가능. 여기서는 자유도 부여)
+            draw();
+        }
+
+        function handleUp(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            isDragging = false;
+            
+            if (gameState === 0) {
+                // 타겟점에 도달했는지 확인
+                const targetMT = mirrorTargets.find(mt => mt.original === dragStartPoint);
+                if (targetMT && getDist(currentMousePos, targetMT.target) < 25) {
+                    targetMT.found = true;
+                    rightPoints.push(targetMT.target);
+                    
+                    // 모두 찾았는지 확인
+                    if (mirrorTargets.every(mt => mt.found)) {
+                        gameState = 1;
+                        updateUI();
+                    }
+                }
+            } else if (gameState === 1) {
+                // 선분 연결 확인
+                let snapPoint = null;
+                for (let pt of rightPoints) {
+                    if (pt !== dragStartPoint && getDist(currentMousePos, pt) < 25) {
+                        snapPoint = pt;
+                        break;
+                    }
+                }
+
+                if (snapPoint) {
+                    // 유효한 엣지인지 확인 (edgesToDraw에 존재하는 쌍인지)
+                    const isValidEdge = edgesToDraw.some(edge => 
+                        (edge[0].x === dragStartPoint.x && edge[0].y === dragStartPoint.y && edge[1].x === snapPoint.x && edge[1].y === snapPoint.y) ||
+                        (edge[1].x === dragStartPoint.x && edge[1].y === dragStartPoint.y && edge[0].x === snapPoint.x && edge[0].y === snapPoint.y)
+                    );
+
+                    const isAlreadyDrawn = drawnEdges.some(edge => 
+                        (edge[0].x === dragStartPoint.x && edge[0].y === dragStartPoint.y && edge[1].x === snapPoint.x && edge[1].y === snapPoint.y) ||
+                        (edge[1].x === dragStartPoint.x && edge[1].y === dragStartPoint.y && edge[0].x === snapPoint.x && edge[0].y === snapPoint.y)
+                    );
+
+                    if (isValidEdge && !isAlreadyDrawn) {
+                        drawnEdges.push([dragStartPoint, snapPoint]);
+                        
+                        // 모두 그렸는지 확인
+                        if (drawnEdges.length === edgesToDraw.length) {
+                            gameState = 2;
+                            updateUI();
+                        }
+                    }
+                }
+            }
+            dragStartPoint = null;
+            draw();
+        }
+
+        // 이벤트 리스너 등록
+        canvas.addEventListener('mousedown', handleDown);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('mouseup', handleUp);
+        canvas.addEventListener('mouseout', handleUp);
+
+        canvas.addEventListener('touchstart', handleDown, {passive: false});
+        canvas.addEventListener('touchmove', handleMove, {passive: false});
+        canvas.addEventListener('touchend', handleUp);
+        canvas.addEventListener('touchcancel', handleUp);
+
+        // 게임 시작
+        window.onload = () => {
+            initGame();
+        };
+
+    </script>
+</body>
+</html>
